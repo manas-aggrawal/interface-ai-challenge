@@ -97,7 +97,8 @@ def _filter_tiers(q: Query, rows: list[RateRow]) -> tuple[list[RateRow], list[st
                f"{q.model_year} model year")
     if q.amount is not None and any(r.amount for r in rows):
         lo, hi = q.amount_range or (q.amount, q.amount)
-        fits = [r for r in rows if r.amount and r.amount[0] <= lo + 0.01 and hi <= r.amount[1] + 1]
+        # tier bounds are whole dollars ("$24,999.99" -> 24999), so the upper bound is exclusive at +1
+        fits = [r for r in rows if r.amount and r.amount[0] <= lo and hi < r.amount[1] + 1]
         if fits:
             span = min(r.amount[1] - r.amount[0] for r in fits)
             rows = [r for r in fits if r.amount[1] - r.amount[0] == span]
@@ -248,7 +249,8 @@ DATE_RX = re.compile(r"\b(January|February|March|April|May|June|July|August|Sept
                      r"\.? \d{1,2}(?:st|nd|rd|th)?,? \d{4}\b|\b\d{1,2}/\d{1,2}/\d{4}\b", re.I)
 
 
-def best_sentences(q: Query, hits, chunks, now: date, idf, k: int = 3, need_number: bool = False) -> list[tuple]:
+def best_sentences(q: Query, hits, chunks, now: date, idf, k: int = 3, need_number: bool = False,
+                   similarity=None) -> list[tuple]:
     """Score sentences in the top chunks: question-word overlap x chunk rank x page trust x recency.
     Returns [(score, passage, chunk)], best first; follow-on lines (bullets under a heading) are
     folded into the passage so an answer like "You're eligible if..." keeps its list."""
@@ -256,7 +258,7 @@ def best_sentences(q: Query, hits, chunks, now: date, idf, k: int = 3, need_numb
     qset = set(qtok)
     syn = set(expand(qtok)) - qset
     if re.search(r"\bopen\b", q.low):
-        syn |= {"close", "closing", "closed"}
+        syn |= set(tokenize("close closing closed closure"))
     present = set()
     for cid, _ in hits[:10]:
         present |= qset & set(tokenize(chunks[cid].text))
@@ -264,13 +266,17 @@ def best_sentences(q: Query, hits, chunks, now: date, idf, k: int = 3, need_numb
     # otherwise fall back to the rarest question word.
     proper = {t for w in re.findall(r"(?<!^)(?<![.?!] )\b[A-Z][\w$&'-]+", q.text.strip())
               for t in tokenize(w) if t not in ("dupaco", "i")}
-    key_terms = sorted(proper & present) or sorted(present, key=lambda t: -idf(t))[:1]
-    when = bool(re.match(r"\s*(when|what date|is .* still open|until when)", q.low)) or "still open" in q.low
+    key_terms = sorted(proper & present)
+    rare = sorted(present, key=lambda t: -idf(t))[:1]
+    when = bool(re.match(r"\s*(when|what date|until when)\b", q.low)) or bool(
+        re.search(r"\b(still open|is [\w' -]+ (?:open|closed|closing)|clos(?:e|ing) date)\b", q.low))
     define = bool(re.match(r"\s*(what is|what are|what's|tell me about|explain|describe)\b", q.low)) and q.intent == "general"
     scored = []
-    for rank, (cid, _) in enumerate(hits[:10]):
+    top_hit = hits[0][1] if hits and hits[0][1] > 0 else 1.0
+    for rank, (cid, hit_score) in enumerate(hits[:10]):
         c = chunks[cid]
         trust = 0.55 + 0.45 * c.kind.authority
+        retrieval = 0.4 + 0.6 * min(1.0, hit_score / top_hit)
         rec = _recency(c.pub_date, now) if c.kind.name in ("news", "blog") else 1.0
         rec_w = 0.6 + 0.4 * rec if c.kind.name not in ("news", "blog") else 0.35 + 0.65 * rec
         sents = sentences(c.text)
@@ -278,6 +284,8 @@ def best_sentences(q: Query, hits, chunks, now: date, idf, k: int = 3, need_numb
         for pos, s in enumerate(sents):
             if pos == 0 and s.startswith(c.title.split("|")[0].strip()[:30]):
                 continue          # the chunk's leading title line
+            if c.kind.name in ("news", "blog") and not s.endswith((".", "!", "?", ":", "”", '"')):
+                continue          # article headlines and photo captions are not answers
             st = set(tokenize(s))
             overlap = sum(idf(t) for t in qset & st) + 0.4 * sum(idf(t) for t in syn & st)
             if overlap <= 0:
@@ -288,26 +296,37 @@ def best_sentences(q: Query, hits, chunks, now: date, idf, k: int = 3, need_numb
                 if not follow:
                     continue
                 s = " ".join(follow)
-            if key_terms and not (set(key_terms) <= (st | title_tok | set(tokenize(c.text[:300])))):
+            ctx = st | title_tok | set(tokenize(c.text[:300]))
+            if key_terms and not set(key_terms) <= ctx:
                 overlap *= 0.25
+            elif not key_terms and rare and not set(rare) <= ctx:
+                overlap *= 0.7
             if need_number and not re.search(r"\d", s):
                 overlap *= 0.3
             if when:
                 overlap *= 2.0 if DATE_RX.search(s) else 0.6
             bonus = 0.15 * len(qset & title_tok)
-            score = (overlap + bonus) * trust * rec_w / (1 + 0.15 * rank)
+            score = (overlap + bonus) * trust * rec_w * retrieval / (1 + 0.1 * rank)
             passage = s
             if define and not faq and pos + 1 < len(sents) and len(s) + len(sents[pos + 1]) < 420:
                 passage = s + " " + sents[pos + 1]
             elif not faq and len(s) < 120 and (s.endswith(":") or not s.endswith(".")):
+                score *= 1.25          # a heading that introduces a list usually *is* the answer
                 for nxt in sents[pos + 1: pos + 4]:
                     if len(passage) + len(nxt) > 360:
                         break
                     passage += (" " if passage.endswith((".", ":")) else ": " if passage == s else "; ") + nxt
             scored.append((score, passage, c))
-    scored.sort(key=lambda x: -x[0])
     if not scored:
         return []
+    if similarity:          # blend in meaning: lexical overlap alone can't tell topic from coincidence
+        sims = similarity(q.text, [x[1] for x in scored])
+        if sims:
+            scored = [(sc * (0.35 + max(0.0, sim)) , s, c) for (sc, s, c), sim in zip(scored, sims)]
+    scored.sort(key=lambda x: -x[0])
+    if when and any(DATE_RX.search(x[1]) for x in scored[:12]):
+        # "when ..." asks for a date: an answer without one doesn't answer it
+        scored = [x for x in scored if DATE_RX.search(x[1])] + [x for x in scored if not DATE_RX.search(x[1])][:1]
     top = scored[0]
     picked, seen = [], set()
     for score, s, c in scored:

@@ -187,7 +187,7 @@ def rows_from_table(t: Table, url: str, page_title: str, kind: PageKind,
             elif m and not v:
                 continue
             elif c and c not in ("—", "-"):
-                if re.fullmatch(r"\$?[\d,]+(\.\d+)?", c.replace(" ", "")) and h:
+                if re.fullmatch(r"\$?[\d,]+(\.\d+)?%?", c.replace(" ", "")) and h:
                     other[h] = c
                 else:
                     label_parts.append(c)

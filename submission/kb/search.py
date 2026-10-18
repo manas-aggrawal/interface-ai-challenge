@@ -37,8 +37,9 @@ def _stem(w: str) -> str:
         if w.endswith(suf) and len(w) - len(suf) >= 4:
             if suf in ("s", "es") and w.endswith("ss"):
                 return w
-            return w[: -len(suf)]
-    return w
+            w = w[: -len(suf)]
+            break
+    return w[:-1] if len(w) > 4 and w.endswith("e") else w
 
 
 def tokenize(text: str) -> list[str]:

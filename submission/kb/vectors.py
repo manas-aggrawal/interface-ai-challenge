@@ -71,6 +71,16 @@ class VectorIndex:
         return [(int(i), float(sims[i])) for i in top if sims[i] > 0]
 
 
+    def similarity(self, query: str, texts: list[str]) -> list[float] | None:
+        """Cosine similarity of the query to each text (None when embeddings are unavailable)."""
+        if not texts or not self._load():
+            return None
+        np = self._np
+        m = np.asarray(self._model.encode([query] + [t[:MAX_CHARS] for t in texts]), dtype=np.float32)
+        m /= np.linalg.norm(m, axis=1, keepdims=True) + 1e-9
+        return [float(x) for x in m[1:] @ m[0]]
+
+
 def rrf(*rankings: list[tuple[int, float]], k: int = 60, weights=None) -> list[tuple[int, float]]:
     """Reciprocal Rank Fusion: each list votes 1/(k+rank) for its items."""
     scores: dict[int, float] = {}

@@ -79,14 +79,20 @@ class DupacoKnowledge:
         return self.retriever.search(q.text, snap, limit=limit)
 
     def _general(self, q, snap: int) -> A.Draft:
-        hits = self._hits(q, snap)
+        chunks = self.store.chunks
+        if q.branch:
+            # a named branch: only passages that mention it can answer; if the site never names it, say so
+            name = q.branch.split()[0]
+            hits = [h for h in self.retriever.search(f"{q.text} {q.branch} {q.branch}", snap, limit=30)
+                    if name in chunks[h[0]].text.lower()]
+            if not hits:
+                return A.Draft(A.REFUSAL, [], confident=False)
+        else:
+            hits = self._hits(q, snap)
         if not hits:
             return A.Draft(A.REFUSAL, [], confident=False)
-        chunks = self.store.chunks
-        if q.branch and not any(q.branch.split()[0] in chunks[c].text.lower() for c, _ in hits[:8]):
-            return A.Draft(A.REFUSAL, [], confident=False)
         picked = A.best_sentences(q, hits, chunks, self._now(snap), self._idf, k=3,
-                                  need_number=q.intent == "count")
+                                  need_number=q.intent == "count", similarity=self.retriever.vectors.similarity)
         if not picked:
             return A.Draft(A.REFUSAL, [], confident=False)
         llm = self.llm.write(q.text, [chunks[c] for c, _ in hits[:6]], self._now(snap))

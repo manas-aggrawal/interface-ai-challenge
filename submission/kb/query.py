@@ -5,6 +5,8 @@ import calendar
 import re
 from dataclasses import dataclass, field
 
+from .search import STOP
+
 MONTHS = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
 MONTHS.update({m.lower(): i for i, m in enumerate(calendar.month_abbr) if m})
 
@@ -142,7 +144,7 @@ def parse(question: str) -> Query:
     if m:
         words = []
         for w in reversed(m.group(1).split()):   # keep the trailing run of non-stop words
-            if w in BRANCH_STOP:
+            if w in BRANCH_STOP or w in STOP:
                 break
             words.insert(0, w)
         name = " ".join(words)
