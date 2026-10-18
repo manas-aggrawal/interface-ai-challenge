@@ -1,6 +1,8 @@
 """Hybrid retrieval: BM25 + vectors, fused, restricted to one snapshot, re-weighted by trust."""
 from __future__ import annotations
 
+import re
+
 from .search import BM25
 from .store import Store
 from .vectors import VectorIndex, rrf
@@ -36,4 +38,24 @@ class Retriever:
         if trust:   # gently prefer official pages over blogs, calculators and old press releases
             fused = [(d, s * (0.6 + 0.4 * chunks[d].kind.authority)) for d, s in fused]
             fused.sort(key=lambda x: -x[1])
-        return fused[:limit]
+        return self._latest_editions(fused)[:limit]
+
+    def _latest_editions(self, ranked):
+        """Yearly press releases are re-published as /slug, /slug-2, /slug-3 ... Only the newest
+        edition reflects the current state ("the fifth time Forbes recognized Dupaco")."""
+        chunks = self.store.chunks
+        newest: dict[str, object] = {}
+        for d, _ in ranked:
+            c = chunks[d]
+            if c.kind.name in ("news", "blog") and c.pub_date:
+                base = re.sub(r"-\d+/?$", "", c.url.rstrip("/"))
+                if base not in newest or c.pub_date > newest[base]:
+                    newest[base] = c.pub_date
+        out = []
+        for d, sc in ranked:
+            c = chunks[d]
+            base = re.sub(r"-\d+/?$", "", c.url.rstrip("/"))
+            if c.kind.name in ("news", "blog") and c.pub_date and newest.get(base) and c.pub_date < newest[base]:
+                continue
+            out.append((d, sc))
+        return out

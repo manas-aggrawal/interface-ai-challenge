@@ -25,11 +25,19 @@ SYNONYMS = {
 }
 
 
+SUFFIXES = ("izations", "ization", "itions", "ition", "ations", "ation", "izing", "ized", "izes", "ize",
+            "ments", "ment", "ings", "ing", "edly", "ies", "ied", "ed", "es", "s")
+
+
 def _stem(w: str) -> str:
-    if len(w) > 4 and w.endswith("ies"):
-        return w[:-3] + "y"
-    if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
-        return w[:-1]
+    """Light suffix stripping so 'recognized' ~ 'recognition', 'closing' ~ 'closes'."""
+    if not w[0].isalpha() or len(w) <= 4 or "$" in w:
+        return w
+    for suf in SUFFIXES:
+        if w.endswith(suf) and len(w) - len(suf) >= 4:
+            if suf in ("s", "es") and w.endswith("ss"):
+                return w
+            return w[: -len(suf)]
     return w
 
 

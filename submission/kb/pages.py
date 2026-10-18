@@ -108,8 +108,13 @@ def link_text(line: str) -> str:
             return ""
         if text.lower() in ("click here", "here", "link"):
             return url
-        if any(k in url for k in ("join.dupaco", "info.dupaco", "dupaco.com/")) and text.lower() in (
-                "apply today", "open now", "join now", "join today", "see details", "learn more", "get started"):
+        host = re.match(r"https?://([^/]+)", url)
+        host = host.group(1).lower() if host else ""
+        if host.endswith("dupaco.com") and host not in ("www.dupaco.com", "dupaco.com"):
+            return f"{text} ({url})"          # join., shine., homeloans. ... members ask for these links
+        if "dupaco.com/" in url and text.lower() in (
+                "apply today", "open now", "join now", "join today", "see details", "learn more", "get started",
+                "branch or atm", "find a branch", "locations"):
             return f"{text} ({url})"
         return text
     return LINK.sub(repl, line)
