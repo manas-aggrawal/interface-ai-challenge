@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
+CTA = re.compile(r"^(email us|get more info|request an application|call us|open my|compare my|apply|see details|"
+                 r"learn more|get started|join now|open now|contact us)\b", re.I)
 MAX_CHARS = 900
 TABLE_ROWS_PER_CHUNK = 14
 
@@ -45,11 +47,13 @@ def _title_lines(prev: list[str]) -> str:
     """The short label lines right above a table name it ("Special Certificates", "Platinum Visa")."""
     picked = []
     for line in reversed(prev[-6:]):
-        s = line.strip().lstrip("#").strip().strip("*").strip()
+        s = re.sub(r"^[#\-*\s]+", "", line.strip()).strip("*").strip()
         if not s:
             continue
-        if len(s) > 80 or s.startswith("|") or s.lower().startswith(("rates are effective", "apply", "see details")):
+        if len(s) > 80 or s.startswith("|") or s.lower().startswith("rates are effective"):
             break
+        if CTA.match(s):
+            continue
         picked.append(s)
         if len(picked) == 2:
             break
