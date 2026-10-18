@@ -215,11 +215,44 @@ def rows_from_table(t: Table, url: str, page_title: str, kind: PageKind,
     return out
 
 
+INLINE = re.compile(r"^(?P<label>[A-Za-z0-9][^:|\n]{2,80}?)\s*\b(?P<measure>APY|APR|dividend rate|interest rate|rate)\b"
+                    r"\s*:?\s*(?P<val>\d{1,2}(?:\.\d{1,3})?\s*%)", re.I)
+ENDED = re.compile(r"\b(offer ended|offer expired|expired|no longer available|ended on|promotion ended)\b", re.I)
+
+
+def inline_rows(version) -> list[RateRow]:
+    """Rates stated in plain text lines ("6-month certificate APY: 3.50%"). Offers marked as ended
+    are skipped: an expired promotion is never the current value."""
+    out = []
+    for b in version.blocks:
+        if b.kind != "text":
+            continue
+        for pos, line in enumerate(b.text.splitlines()):
+            line = line.strip(" -*")
+            m = INLINE.match(line)
+            if not m or len(line) > 160 or ENDED.search(line):
+                continue
+            label = m.group("label").strip(" :-")
+            meas = _measure(m.group("measure")) or "rate"
+            fam = family_of(f"{label} {b.heading}")
+            if fam in LOAN_FAMILIES and meas == "apy":
+                meas = "apr"
+            text = f"{b.heading} {label}"
+            out.append(RateRow(
+                url=version.url, page_title=version.title, kind=version.kind, table_title=b.heading, header=[],
+                cells=[line], label=label, values={meas: _clean_value(m.group("val"))}, other={}, family=fam,
+                business="business" in text.lower(), term_months=parse_term(label),
+                model_years=parse_model_years(label), amount=parse_amount(label), jumbo="jumbo" in text.lower(),
+                special="special" in text.lower(), effective=None, pos=pos, table_key=f"{version.url}#inline"))
+    return out
+
+
 class FactStore:
     """All rate rows ever seen, deduplicated across snapshots."""
 
     def __init__(self):
-        self.rows: list[RateRow] = []
+        self.rows: list[RateRow] = []          # from rate tables (primary)
+        self.inline: list[RateRow] = []        # from plain-text lines (used only where no table exists)
         self._seen: dict[tuple, RateRow] = {}
 
     def add_version(self, version, snap: int) -> None:
@@ -230,13 +263,23 @@ class FactStore:
             rows = rows_from_table(b.table, version.url, version.title, version.kind, fam)
             if rows:
                 fam = rows[-1].family
-            for r in rows:
-                key = (r.url, r.table_title, r.label, tuple(sorted(r.values.items())), r.effective)
-                existing = self._seen.get(key)
-                if existing is None:
-                    self._seen[key] = existing = r
-                    self.rows.append(r)
-                existing.snaps.add(snap)
+            self._add(rows, snap)
+        self._add(inline_rows(version), snap, inline=True)
+
+    def _add(self, rows, snap: int, inline: bool = False) -> None:
+        for r in rows:
+            key = (r.url, r.table_title, r.label, tuple(sorted(r.values.items())), r.effective)
+            existing = self._seen.get(key)
+            if existing is None:
+                self._seen[key] = existing = r
+                (self.inline if inline else self.rows).append(r)
+            existing.snaps.add(snap)
 
     def in_snapshot(self, snap: int) -> list[RateRow]:
-        return [r for r in self.rows if snap in r.snaps]
+        rows = [r for r in self.rows if snap in r.snaps]
+        have = {r.family for r in rows}
+        return rows + [r for r in self.inline if snap in r.snaps and r.family not in have]
+
+    def all_rows(self) -> list[RateRow]:
+        have = {r.family for r in self.rows}
+        return self.rows + [r for r in self.inline if r.family not in have]

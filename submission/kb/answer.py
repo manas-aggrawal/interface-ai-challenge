@@ -144,11 +144,12 @@ def answer_rate(q: Query, facts: list[RateRow], snap_rows_all: list[RateRow]) ->
 
     page_rows = _pick_page(fam_rows)
     rows, unmet = _filter_tiers(q, page_rows)
-    if unmet and (q.term_months or q.model_year) and not rows:
-        return Draft(REFUSAL, [], confident=False)
-    if unmet and any(u.endswith("term") or u.endswith("model year") for u in unmet):
-        return Draft(f"Dupaco's rate sheet doesn't list a {', '.join(unmet)} option for that product. "
-                     "Please contact Dupaco to ask about it.", [page_rows[0].url], confident=False)
+    hard = [u for u in unmet if u != "balance tier"]
+    if hard:
+        # the member asked for a tier this product doesn't have: say so instead of quoting another tier
+        name = FAMILY_NAMES.get(q.family, q.family.replace("_", " "))
+        return Draft(f"Dupaco's rate sheet doesn't list a {' / '.join(hard)} option for {name}s, so I can't quote "
+                     "a rate for it. Please contact Dupaco to ask about it.", [page_rows[0].url], confident=False)
     rows = sorted(rows, key=lambda r: (r.table_key != rows[0].table_key, r.pos))[:16]
     best = rows[0]
     name = FAMILY_NAMES.get(best.family, best.family)

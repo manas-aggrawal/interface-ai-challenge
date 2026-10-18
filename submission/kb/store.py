@@ -55,6 +55,7 @@ class Store:
     def add_snapshot(self, snapshot) -> list[int]:
         """Add one snapshot; returns ids of chunks that are new (need embedding)."""
         idx = len(self.snapshots)
+        self._urls = {}
         self.snapshots.append((snapshot.snapshot_id, date.fromisoformat(snapshot.taken_on[:10])))
         boiler = boilerplate_lines([strip_markup(p.markdown) for p in snapshot.pages])
         new_chunks: list[int] = []
@@ -99,6 +100,13 @@ class Store:
             return self.latest
         i = bisect_right([s[1] for s in self.snapshots], d) - 1
         return max(0, i)
+
+    def urls_in(self, idx: int) -> set[str]:
+        if not hasattr(self, "_urls"):
+            self._urls = {}
+        if idx not in self._urls:
+            self._urls[idx] = {u for u, _ in self.pages_in(idx)}
+        return self._urls[idx]
 
     def snapshot_id(self, idx: int) -> str:
         return self.snapshots[idx][0]

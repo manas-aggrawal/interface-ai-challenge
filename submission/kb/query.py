@@ -82,8 +82,16 @@ def _money(s: str) -> float:
     return float(s.rstrip("k")) * mult
 
 
+NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+             "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "eighteen": 18, "twenty": 20, "thirty": 30,
+             "twenty-four": 24, "thirty-six": 36, "forty-eight": 48, "sixty": 60, "seventy-two": 72,
+             "eighty-four": 84}
+NUM_WORD_RX = re.compile(r"\b(" + "|".join(sorted(NUM_WORDS, key=len, reverse=True)) + r")[- ](months?|years?|mo)\b")
+
+
 def parse(question: str) -> Query:
     low = question.lower().replace("–", "-").replace("—", "-")
+    low = NUM_WORD_RX.sub(lambda m: f"{NUM_WORDS[m.group(1)]}-{m.group(2)}", low)
     q = Query(question, low)
 
     for fam, rx in Q_FAMILIES:

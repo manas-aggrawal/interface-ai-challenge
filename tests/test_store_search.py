@@ -50,3 +50,16 @@ class SearchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QueryTest(unittest.TestCase):
+    def test_parse(self):
+        from kb.query import parse
+        q = parse("What's the APR for a 60-month auto loan on a 2025 model-year vehicle?")
+        self.assertEqual((q.family, q.term_months, q.model_year, q.measure), ("auto", 60, 2025, "apr"))
+        q = parse("What dividend rate do I earn on Share Savings with a balance between $10,000 and $24,999?")
+        self.assertEqual((q.family, q.amount_range), ("share_savings", (10000, 24999)))
+        self.assertEqual(parse("Current APY on a six month share certificate?").term_months, 6)
+        self.assertTrue(parse("What is your rate on a 7/1 adjustable-rate mortgage?").unlisted)
+        self.assertEqual(parse("What was the rate as of May 2026?").as_of, "2026-05-31")
+        self.assertEqual(parse("Can you give me the lobby hours for the Mullan Avenue branch?").branch, "mullan avenue")

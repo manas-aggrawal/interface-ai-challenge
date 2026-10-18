@@ -69,8 +69,28 @@ class DupacoKnowledge:
             draft = self._count(q, snap)
         if draft is None:
             draft = self._general(q, snap)
+        if not draft.confident and snap > 0 and q.intent != "rate" and not q.branch:
+            draft = self._from_missing_pages(q, snap) or draft
         return Answer(text=draft.text, sources=[Source(url=u, snapshot_id=sid) for u in draft.urls[:3]],
                       confident=draft.confident, conflict_note=draft.conflict_note)
+
+    def _from_missing_pages(self, q, snap: int) -> A.Draft | None:
+        """A page absent from the newest crawl isn't evidence its facts changed (crawls miss pages).
+        If nothing current answers, use the latest earlier copy of a page that is no longer in the crawl."""
+        current = self.store.urls_in(snap)
+        chunks = self.store.chunks
+        for prev in range(snap - 1, -1, -1):
+            hits = [h for h in self.retriever.search(q.text, prev, limit=30) if chunks[h[0]].url not in current]
+            if not hits:
+                continue
+            picked = A.best_sentences(q, hits, chunks, self._now(prev), self._idf, k=2,
+                                      similarity=self.retriever.vectors.similarity)
+            if picked and picked[0][0] > 2.0:
+                text = " ".join(s if s.endswith((".", "!", "?", ":")) else s + "." for _, s, _ in picked)
+                when = self.store.snapshots[prev][1].strftime("%B %-d, %Y")
+                return A.Draft(f"{text} (This is from a page last seen on Dupaco's website on {when}.)",
+                               list(dict.fromkeys(c.url for _, _, c in picked)))
+        return None
 
     def _discontinued(self, q, snap: int, snap_rows) -> A.Draft | None:
         """A product that used to be on the official rate sheet but now only survives on promo /

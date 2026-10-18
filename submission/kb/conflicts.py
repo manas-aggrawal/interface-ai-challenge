@@ -80,10 +80,11 @@ def _trust(r: RateRow, snap: int) -> tuple:
 
 def rate_conflicts(facts) -> list[dict]:
     rows_by_table = defaultdict(list)
-    for r in facts.rows:
+    all_rows = facts.all_rows()
+    for r in all_rows:
         rows_by_table[r.table_key].append(r)
     groups: dict[tuple, list[tuple[RateRow, str, int]]] = defaultdict(list)
-    for r in facts.rows:
+    for r in all_rows:
         for measure, value in r.values.items():
             for snap in r.snaps:
                 groups[_key(r, measure, rows_by_table)].append((r, value, snap))
