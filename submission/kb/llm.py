@@ -34,6 +34,13 @@ Choose the passage(s) that directly answer the question with CURRENT information
 Reply with ONLY the passage numbers separated by commas (e.g. "3" or "1,4"), or NONE if no passage answers the question."""
 
 
+REWRITE_SYSTEM = """Rewrite a credit-union member's question using the words a credit union website would use, so a
+keyword search can find the answer. Examples of website wording: routing number, share savings, certificate,
+APY, APR, auto loan, mortgage, home equity line of credit, lobby hours, drive-up hours, branch, membership,
+Shine Online Banking, debit card, overdraft. Keep every specific detail (numbers, terms, names, dates, places).
+Do not answer the question. Output only the rewritten question on one line."""
+
+
 @dataclass
 class LLMAnswer:
     text: str
@@ -114,6 +121,14 @@ class LLM:
         except Exception:
             self.failures += 1
         return None
+
+    def rewrite(self, question: str) -> str | None:
+        """Translate loose wording ("transit number", "borrow for a house") into site vocabulary."""
+        out = self._chat(REWRITE_SYSTEM, question, 120)
+        if not out:
+            return None
+        out = out.strip().strip('"').splitlines()[0].strip()
+        return out if 5 < len(out) < 300 and out.lower() != question.lower() else None
 
     def select(self, question: str, passages: list[tuple[str, object]], today) -> list[int] | None:
         """Ask the model which candidate passages answer the question.

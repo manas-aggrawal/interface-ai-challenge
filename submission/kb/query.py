@@ -19,7 +19,7 @@ Q_FAMILIES = [
     ("home_improvement", r"home improvement"),
     ("ira", r"\biras?\b|roth|retirement"),
     ("certificate", r"\bcds?\b|certificates?|term[- ]share|certificate of deposit"),
-    ("mortgage", r"mortgage|home loans?|house loan|\d+[- ]year (?:fixed|loan|mortgage)|refinanc|\barm\b|adjustable"),
+    ("mortgage", r"mortgage|home loans?|house loan|\b(?:buy(?:ing)?|borrow\w*|financ\w*|loan)\b[^?.]{0,30}\b(?:house|home)\b|\d+[- ]year (?:fixed|loan|mortgage)|refinanc|\barm\b|adjustable"),
     ("auto", r"\bauto\b|\bcars?\b|vehicle|truck|motorcycle"),
     ("personal_loan", r"personal loan"),
     ("student_loan", r"student loan"),
@@ -36,7 +36,8 @@ Q_FAMILIES = [
     ("share_savings", r"share savings|savings account|savings tiers?|regular savings|\bsavings\b"),
 ]
 
-RATE_WORDS = re.compile(r"\b(rates?|apy|apr|interest|dividends?|yield|earn|pay(?:s)?\b.*%|percent|%)", re.I)
+RATE_WORDS = re.compile(r"\b(rates?|apy|apr|interest|dividends?|yield|earn|paid|pays? me|charge|cost to borrow|"
+                        r"pay(?:s)?\b.*%|percent|%)", re.I)
 # Words that name a product we have *no* rate table for. If the member asks for a rate on one of
 # these, the honest answer is "not listed".
 UNLISTED = re.compile(r"\b(adjustable|arm\b|\d/\d|construction|jumbo mortgage|fha|va loan|usda|land loan|"
@@ -89,7 +90,27 @@ NUM_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "se
 NUM_WORD_RX = re.compile(r"\b(" + "|".join(sorted(NUM_WORDS, key=len, reverse=True)) + r")[- ](months?|years?|mo)\b")
 
 
+# Different words members use for the same thing -> the website's own wording (applied before search).
+ALIASES = [
+    (r"\b(?:routing|aba|transit|routing transit|bank routing|bank|wire|wiring|sort)\s*(?:code|no\.?|#|id|number)\b|\baba\b",
+     "routing number"),
+    (r"\bhy\s?vee\b", "Hy-Vee"),
+    (r"\b(?:phone|telephone|contact|customer service|call center|support)\s*(?:number|no\.?|#|line)\b", "phone number"),
+    (r"\b(?:cd|cds)\b", "certificate"),
+    (r"\bdrive[- ]?(?:thru|through)\b", "drive-up"),
+    (r"\bonline banking\b", "Shine Online Banking"),
+]
+
+
+def normalize(question: str) -> str:
+    out = question
+    for rx, repl in ALIASES:
+        out = re.sub(rx, repl, out, flags=re.I)
+    return re.sub(r"\b(routing number)(?:\s+number)+\b", r"\1", out, flags=re.I)
+
+
 def parse(question: str) -> Query:
+    question = normalize(question)
     low = question.lower().replace("–", "-").replace("—", "-")
     low = NUM_WORD_RX.sub(lambda m: f"{NUM_WORDS[m.group(1)]}-{m.group(2)}", low)
     q = Query(question, low)
@@ -157,7 +178,7 @@ def parse(question: str) -> Query:
     elif m and not m.group(1) and m.group(2):
         q.as_of = f"{int(m.group(2)):04d}-12-31"
 
-    m = re.search(r"((?:[a-z0-9$.'&-]+ ){0,2}[a-z0-9$.'&-]+) (?:branch|office)\b", low)
+    m = re.search(r"((?:[a-z0-9$.'&-]+ ){0,2}[a-z0-9$.'&-]+) (?:branch|office|location)\b", low)
     if m:
         words = []
         for w in reversed(m.group(1).split()):   # keep the trailing run of non-stop words
@@ -165,7 +186,8 @@ def parse(question: str) -> Query:
                 break
             words.insert(0, w)
         name = " ".join(words)
-        if name and not set(words) & {"each", "every", "all", "any", "nearest", "closest", "many", "same", "which"}:
+        if name and not set(words) & {"each", "every", "all", "any", "nearest", "closest", "many", "same", "which",
+                                      "atm", "branch", "near", "nearby", "new", "other"}:
             q.branch = name
 
     if re.search(r"\b(link|url|website|web address|web page|webpage)\b", low):
@@ -178,4 +200,6 @@ def parse(question: str) -> Query:
         q.intent = "address"
     elif re.search(r"\bhow many\b|\bnumber of\b", low):
         q.intent = "count"
+    elif re.search(r"\b(routing|phone) number\b", low):
+        q.intent = "identifier"
     return q

@@ -282,7 +282,7 @@ def best_sentences(q: Query, hits, chunks, now: date, idf, k: int = 3, need_numb
               for t in tokenize(w) if t not in ("dupaco", "i")}
     key_terms = sorted(proper & present)
     rare = sorted(present, key=lambda t: -idf(t))[:1]
-    when = bool(re.match(r"\s*(when|what date|until when)\b", q.low)) or bool(
+    when = bool(re.match(r"\s*(when|what date|until when|what happened|what(?:'s| is) happening)\b", q.low)) or bool(
         re.search(r"\b(still open|is [\w' -]+ (?:open|closed|closing)|clos(?:e|ing) date)\b", q.low))
     define = bool(re.match(r"\s*(what is|what are|what's|tell me about|explain|describe)\b", q.low)) and q.intent == "general"
     scored = []
@@ -298,8 +298,9 @@ def best_sentences(q: Query, hits, chunks, now: date, idf, k: int = 3, need_numb
         for pos, s in enumerate(sents):
             if pos == 0 and s.startswith(c.title.split("|")[0].strip()[:30]):
                 continue          # the chunk's leading title line
-            if c.kind.name in ("news", "blog") and not s.endswith((".", "!", "?", ":", "”", '"')):
-                continue          # article headlines and photo captions are not answers
+            if c.kind.name in ("news", "blog") and (not s.endswith((".", "!", "?", ":", "”", '"'))
+                                                    or (len(s) < 40 and not re.search(r"\d", s))):
+                continue          # article headlines and photo-caption fragments are not answers
             st = set(tokenize(s))
             overlap = sum(idf(t) for t in qset & st) + 0.4 * sum(idf(t) for t in syn & st)
             if overlap <= 0:

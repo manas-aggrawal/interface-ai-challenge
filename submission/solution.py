@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -50,8 +51,25 @@ class DupacoKnowledge:
         snap = self.store.snapshot_for(as_of or q.as_of)
         key = (re.sub(r"\W+", " ", question.lower()).strip(), snap)
         if key not in self._cache:
-            self._cache[key] = self._answer(q, snap)
+            t0 = time.time()
+            ans = self._answer(q, snap)
+            # rescue only while there's time left in a ~2 s answer budget
+            if not ans.confident and self._rescuable(q) and time.time() - t0 < 0.8:
+                # loose wording? let the LLM translate it into the site's vocabulary and try once more
+                alt = self.llm.rewrite(question)
+                if alt:
+                    q2 = parse(alt)
+                    if not q2.unlisted:
+                        ans2 = self._answer(q2, snap)
+                        if ans2.confident:
+                            ans = ans2
+            self._cache[key] = ans
         return self._cache[key]
+
+    @staticmethod
+    def _rescuable(q) -> bool:
+        """Refusals that came from missing evidence, not from a deliberate 'not offered' decision."""
+        return not q.unlisted and not q.branch and not (q.intent == "rate" and q.family)
 
     def _answer(self, q, snap: int) -> Answer:
         sid = self.store.snapshot_id(snap)
@@ -63,11 +81,13 @@ class DupacoKnowledge:
         if draft is None and q.intent == "hours":
             draft = self._hours(q, snap)
         if draft is None and q.intent == "address":
-            draft = self._address(q, snap)
+            draft = self._address(q, snap) or self._main_address(q, snap)
         if draft is None and q.intent == "link":
             draft = self._link(q, snap)
         if draft is None and q.intent == "count":
             draft = self._count(q, snap)
+        if draft is None and q.intent == "identifier":
+            draft = self._identifier(q, snap)
         if draft is None:
             draft = self._general(q, snap)
         if not draft.confident and snap > 0 and q.intent != "rate" and not q.branch:
@@ -92,6 +112,34 @@ class DupacoKnowledge:
                 return A.Draft(f"{text} (This is from a page last seen on Dupaco's website on {when}.)",
                                list(dict.fromkeys(c.url for _, _, c in picked)))
         return None
+
+    IDENT = {
+        "routing number": (re.compile(r"routing number[^0-9\n]{0,40}?\b(\d{9})\b|\baba number[^0-9\n]{0,20}?\b(\d{9})\b", re.I),
+                           "Dupaco's routing number is {}."),
+        "phone number": (re.compile(r"\b(\d{3}-\d{3}-\d{4})\b"), "You can reach Dupaco at {}."),
+    }
+
+    def _identifier(self, q, snap: int) -> A.Draft | None:
+        """'What's your routing number?' -> one clean line: the value most trusted pages agree on."""
+        kind = "routing number" if "routing number" in q.low else "phone number"
+        rx, template = self.IDENT[kind]
+        votes: Counter = Counter()
+        where: dict[str, list[str]] = {}
+        for url, ver in self.store.pages_in(snap):
+            if ver.kind.authority < 0.8:
+                continue
+            text = ver.text
+            if kind == "phone number":   # only numbers presented as Dupaco's own phone line
+                text = " ".join(re.findall(r"(?:phone|call)[^\n]{0,40}", text, re.I))
+            for m in rx.finditer(text):
+                val = next(g for g in m.groups() if g)
+                votes[val] += ver.kind.authority
+                where.setdefault(val, []).append(url)
+        if not votes:
+            return None
+        val = votes.most_common(1)[0][0]
+        urls = sorted(set(where[val]), key=lambda u: (not u.rstrip("/").endswith("/contact"), len(u)))[:2]
+        return A.Draft(template.format(val), urls)
 
     def _discontinued(self, q, snap: int, snap_rows) -> A.Draft | None:
         """A product that used to be on the official rate sheet but now only survives on promo /
@@ -118,7 +166,9 @@ class DupacoKnowledge:
         return self.store.snapshots[snap][1]
 
     def _hits(self, q, snap, limit=12):
-        return self.retriever.search(q.text, snap, limit=limit)
+        # names the member capitalised ("Forbes", "Hy-Vee", "Galena") carry the question: weight them up
+        names = [w for w in re.findall(r"(?<!^)\b[A-Z][\w$&'-]+", q.text.strip()) if w.lower() not in ("dupaco", "i")]
+        return self.retriever.search(" ".join([q.text] + names * 2), snap, limit=limit)
 
     def _general(self, q, snap: int) -> A.Draft:
         chunks = self.store.chunks
@@ -172,6 +222,10 @@ class DupacoKnowledge:
 
     def _off_topic(self, q, picked) -> bool:
         """No-LLM fallback for refusing: the best passage is neither close in meaning nor a strong match."""
+        names = [q.branch] if q.branch else []
+        names += [w.lower() for w in re.findall(r"(?<!^)\b[A-Z][\w$&'-]{2,}", q.text.strip()) if w.lower() != "dupaco"]
+        if names and any(n in (p[1] + " " + p[2].text[:300]).lower() for n in names for p in picked[:2]):
+            return False        # the passage is about the very thing the member named
         sims = self.retriever.vectors.similarity(q.text, [p[1] for p in picked[:3]])
         if not sims:
             return False
@@ -307,6 +361,18 @@ class DupacoKnowledge:
         if not best:
             return None
         return A.Draft(f"The {q.branch.title()} branch is at {best[0]}.", [best[2]])
+
+    def _main_address(self, q, snap: int) -> A.Draft | None:
+        """'What's your address?' with no branch named -> the mailing address on the contact page."""
+        if q.branch:
+            return None
+        for url, ver in self.store.pages_in(snap):
+            if url.rstrip("/").endswith("dupaco.com/contact"):
+                m = re.search(r"Address:?\**\s*(P\.?O\.? Box \d+)\s*\n?\s*([A-Za-z .]+,\s*[A-Z]{2}\s*[\d-]{5,10})", ver.text)
+                if m:
+                    return A.Draft(f"Dupaco's mailing address is {m.group(1)}, {m.group(2)}. For a branch address, "
+                                   "tell me which branch (or use the branch locator).", [url])
+        return None
 
     def _link(self, q, snap: int, subdomains_only: bool = False) -> A.Draft | None:
         if q.families and not subdomains_only:
