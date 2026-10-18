@@ -13,6 +13,13 @@ python harness/run_eval.py --submission submission --eval eval/public_eval.jsonl
 | Our dev eval (`devtools/dev_eval.jsonl`, 40 reworded / as-of / refusal q) | 1.0 | same | same |
 | Kit selftest (`harness/selftest`) | 1.0, conflicts F1 1.0 | | |
 
+## Try it yourself
+
+```bash
+python devtools/web.py      # local web page at http://127.0.0.1:8765 (ask, pick an "as of" date, see conflicts)
+python devtools/chat.py     # terminal chat; prefix "@2026-05-31 " for as-of questions, ":conflicts" to list them
+```
+
 ## API keys
 
 **None are required.** The system runs fully offline and scores the same on our evals without a key.

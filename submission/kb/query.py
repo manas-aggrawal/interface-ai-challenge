@@ -97,6 +97,9 @@ def parse(question: str) -> Query:
     for fam, rx in Q_FAMILIES:
         if re.search(rx, low) and fam not in q.families:
             q.families.append(fam)
+    # "the 17-month jumbo special" / "10-month special": on this site those are certificate specials
+    if not q.families and re.search(r"\bjumbo\b|\d+[- ]?months?\s+(?:fixed\s+)?(?:jumbo\s+)?special", low):
+        q.families.append("certificate")
     # "savings" also appears in "health savings", "high-yield savings", "bright savings"...
     if "share_savings" in q.families and len(q.families) > 1 and not re.search(r"share savings", low):
         q.families.remove("share_savings")
@@ -135,6 +138,11 @@ def parse(question: str) -> Query:
         q.superlative = "max"
     elif re.search(r"lowest|cheapest|minimum|least", low):
         q.superlative = "min"
+    # "What was the 10-month jumbo certificate special?" names a product + tier: that's a rate question
+    # even without the word "rate".
+    if q.families and not q.wants_rate and (q.term_months or q.jumbo or q.special or q.amount is not None) \
+            and not re.search(r"\bhow (?:do|can) i\b|\bopen\b|\bwhere\b|\bwho\b", low):
+        q.wants_rate = True
     u = UNLISTED.search(low)
     if u and RATE_WORDS.search(low):
         q.unlisted = u.group(0)
