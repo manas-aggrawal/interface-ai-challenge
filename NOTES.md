@@ -18,7 +18,12 @@ python harness/run_eval.py --submission submission --eval eval/public_eval.jsonl
 ```bash
 python devtools/web.py      # local web page at http://127.0.0.1:8765 (ask, pick an "as of" date, see conflicts)
 python devtools/chat.py     # terminal chat; prefix "@2026-05-31 " for as-of questions, ":conflicts" to list them
+python devtools/run_all.py  # every scorer pillar on public / dev / selftest, starter vs ours, with and without LLM
+python -m unittest discover tests
 ```
+
+Dates before our oldest snapshot (12 May 2026): rate questions get "I can't tell you what the site showed on
+that date" (no numbers) instead of the oldest snapshot's values; history questions use the newsroom archive.
 
 ## API keys
 

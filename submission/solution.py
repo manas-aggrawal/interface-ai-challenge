@@ -46,9 +46,21 @@ class DupacoKnowledge:
         self._conflicts = None
 
     # ------------------------------------------------------------------ answer
+    BEFORE_HISTORY = ("I can't tell you what Dupaco's website showed on that date - my copies of the site start "
+                      "later than that, and rates change over time. Ask without a date for the current rates, "
+                      "or contact Dupaco for historical rates.")
+
     def answer(self, question: str, as_of: str | None = None) -> Answer:
         q = parse(question)
-        snap = self.store.snapshot_for(as_of or q.as_of)
+        when = as_of or q.as_of
+        if self.store.before_history(when):
+            if q.intent == "rate" or q.wants_rate:
+                # never pass off the oldest snapshot's numbers as values from an earlier date
+                return Answer(text=self.BEFORE_HISTORY, sources=[], confident=False,
+                              conflict_note=f"requested date {when} is before the first snapshot "
+                                            f"({self.store.snapshots[0][1].isoformat()})")
+            when = None       # history questions: the newsroom archive on today's site covers past events
+        snap = self.store.snapshot_for(when)
         key = (re.sub(r"\W+", " ", question.lower()).strip(), snap)
         if key not in self._cache:
             t0 = time.time()

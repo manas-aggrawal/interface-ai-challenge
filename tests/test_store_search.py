@@ -1,6 +1,6 @@
 import unittest
 
-from helpers import snapshots
+from helpers import snapshots  # noqa: F401
 from kb.search import BM25, tokenize
 from kb.store import Store
 
@@ -63,3 +63,18 @@ class QueryTest(unittest.TestCase):
         self.assertTrue(parse("What is your rate on a 7/1 adjustable-rate mortgage?").unlisted)
         self.assertEqual(parse("What was the rate as of May 2026?").as_of, "2026-05-31")
         self.assertEqual(parse("Can you give me the lobby hours for the Mullan Avenue branch?").branch, "mullan avenue")
+
+
+class BeforeHistoryTest(unittest.TestCase):
+    def test_dates_before_first_snapshot_are_not_answered_with_later_rates(self):
+        import solution
+        ks = solution.build()
+        for s in snapshots():
+            ks.ingest(s)
+        self.assertTrue(ks.store.before_history("2025-05-31"))
+        self.assertFalse(ks.store.before_history("2026-05-12"))
+        for q, as_of in [("car loan rates as of May 2025", None), ("What is the 10-month jumbo special APY?", "2025-01-01")]:
+            a = ks.answer(q, as_of=as_of)
+            self.assertFalse(a.confident, q)
+            self.assertNotRegex(a.text, r"\d", q)            # a refusal must not contain numbers
+        self.assertTrue(ks.answer("What is the 10-month jumbo special APY?", as_of="2026-05-31").confident)

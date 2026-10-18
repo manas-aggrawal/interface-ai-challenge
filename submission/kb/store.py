@@ -101,6 +101,15 @@ class Store:
         i = bisect_right([s[1] for s in self.snapshots], d) - 1
         return max(0, i)
 
+    def before_history(self, as_of: str | None) -> bool:
+        """True when the date is earlier than our oldest copy of the website."""
+        if not as_of or not self.snapshots:
+            return False
+        try:
+            return date.fromisoformat(str(as_of)[:10]) < self.snapshots[0][1]
+        except ValueError:
+            return False
+
     def urls_in(self, idx: int) -> set[str]:
         if not hasattr(self, "_urls"):
             self._urls = {}
