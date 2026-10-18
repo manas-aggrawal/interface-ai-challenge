@@ -128,7 +128,17 @@ def _filter_tiers(q: Query, rows: list[RateRow]) -> tuple[list[RateRow], list[st
     return rows, unmet
 
 
-def answer_rate(q: Query, facts: list[RateRow], snap_rows_all: list[RateRow]) -> Draft | None:
+def tidy(text: str) -> str:
+    """Remove markdown leftovers from verbatim passages."""
+    text = re.sub(r"\\([*_#|\\])", r"\1", text)
+    text = re.sub(r"(\*\*|__|(?<!\w)_|_(?!\w))", "", text)
+    text = re.sub(r"([.!?]):", r"\1", text)
+    text = re.sub(r"\s+([.,;:])", r"\1", text)
+    text = re.sub(r"\.\.+", ".", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def answer_rate(q: Query, facts: list[RateRow], snap_rows_all: list[RateRow], as_of: date | None = None) -> Draft | None:
     if q.unlisted:
         return Draft(REFUSAL, [], confident=False)
     fam_rows = [r for r in facts if r.family in q.families[:1]]
@@ -140,7 +150,7 @@ def answer_rate(q: Query, facts: list[RateRow], snap_rows_all: list[RateRow]) ->
         fam_rows = [r for r in fam_rows if not r.business] or fam_rows
 
     if q.family == "credit_card" and (q.listing or not re.search(r"platinum|rewards", q.low)):
-        return _credit_card_list(q, fam_rows)
+        return _credit_card_list(q, fam_rows, as_of)
 
     page_rows = _pick_page(fam_rows)
     rows, unmet = _filter_tiers(q, page_rows)
@@ -154,10 +164,11 @@ def answer_rate(q: Query, facts: list[RateRow], snap_rows_all: list[RateRow]) ->
     best = rows[0]
     name = FAMILY_NAMES.get(best.family, best.family)
     lines = [_row_text(r, q.measure) for r in rows]
+    when = f"As of {as_of.strftime('%B %-d, %Y')}, Dupaco's" if as_of else "Dupaco's current"
     if len(lines) == 1:
-        text = f"Dupaco's current {name} rate - {lines[0]}."
+        text = f"{when} {name} rate - {lines[0]}."
     else:
-        text = f"Dupaco's current {name} rates:\n- " + "\n- ".join(lines)
+        text = f"{when} {name} rates:\n- " + "\n- ".join(lines)
     if best.effective:
         text += f"\n(Rates effective as of {best.effective.strftime('%B %-d, %Y')}; rates are subject to change.)"
     note = _stale_note(rows, snap_rows_all)
@@ -170,7 +181,7 @@ def answer_rate(q: Query, facts: list[RateRow], snap_rows_all: list[RateRow]) ->
     return Draft(text, urls, conflict_note=note, quotes=[rows[0].label])
 
 
-def _credit_card_list(q: Query, rows: list[RateRow]) -> Draft:
+def _credit_card_list(q: Query, rows: list[RateRow], as_of: date | None = None) -> Draft:
     """Personal and business cards live on different pages; take the most trusted row per card."""
     best: dict[str, RateRow] = {}
     for r in rows:
@@ -194,7 +205,9 @@ def _credit_card_list(q: Query, rows: list[RateRow]) -> Draft:
         v = r.values.get("apr") or next(iter(r.values.values()))
         kind = "variable APR" if c.startswith("Business") else "APR"
         lines.append(f"{c}: {v} {kind}")
-    text = "Dupaco's credit cards and their current APRs:\n- " + "\n- ".join(lines)
+    head = f"As of {as_of.strftime('%B %-d, %Y')}, Dupaco's credit cards and their APRs" if as_of else \
+        "Dupaco's credit cards and their current APRs"
+    text = head + ":\n- " + "\n- ".join(lines)
     urls = sorted({best[c].url for c in cards}, key=lambda u: (not u.endswith("/rates"), u))
     return Draft(text, urls)
 

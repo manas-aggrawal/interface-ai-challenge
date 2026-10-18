@@ -58,7 +58,8 @@ class DupacoKnowledge:
         draft = None
         if q.intent == "rate" or (q.wants_rate and q.intent != "link"):
             snap_rows = self.facts.in_snapshot(snap)
-            draft = self._discontinued(q, snap, snap_rows) or A.answer_rate(q, snap_rows, snap_rows)
+            as_of_date = self.store.snapshots[snap][1] if snap != self.store.latest else None
+            draft = self._discontinued(q, snap, snap_rows) or A.answer_rate(q, snap_rows, snap_rows, as_of_date)
         if draft is None and q.intent == "hours":
             draft = self._hours(q, snap)
         if draft is None and q.intent == "address":
@@ -136,13 +137,23 @@ class DupacoKnowledge:
                                   need_number=q.intent == "count", similarity=self.retriever.vectors.similarity)
         if not picked:
             return A.Draft(A.REFUSAL, [], confident=False)
+        how_to = bool(re.match(r"\s*(how (?:can|do|would|should) i|can i|where (?:can|do) i|i (?:want|need) to|"
+                               r"what (?:should|do|can) i do)\b", q.low))
         choice = self.llm.select(q.text, [(p[1], p[2]) for p in picked], self._now(snap))
+        if choice == []:
+            # the judge says none of the passages answer this: don't bluff
+            contact = self._contact_line(snap) if how_to else None
+            if contact:
+                return A.Draft(contact, ["https://www.dupaco.com/contact"])
+            return A.Draft(A.REFUSAL, [], confident=False)
+        if choice is None and self._off_topic(q, picked):
+            return A.Draft(A.REFUSAL, [], confident=False)
         if choice:   # LLM as judge: its picks go first (words stay the website's own), top passages fill in
             order = list(dict.fromkeys(list(choice) + list(range(len(picked)))))
             picked = [picked[i] for i in order[:3]]
         else:        # no LLM, or it found nothing convincing: keep the top passages
             picked = picked[:3]
-        text = " ".join(s if s.endswith((".", "!", "?", ":")) else s + "." for _, s, _ in picked)
+        text = A.tidy(" ".join(s if s.endswith((".", "!", "?", ":")) else s + "." for _, s, _ in picked))
         urls = list(dict.fromkeys(c.url for _, _, c in picked))
         if "charter area" in text.lower():
             area = self._charter_area(snap)
@@ -152,13 +163,20 @@ class DupacoKnowledge:
             link = self._link(q, snap, subdomains_only=True)
             if link:
                 text += f" You can do this online at {link.urls[0]}."
-        if re.match(r"\s*(how (?:can|do|would|should) i|can i|where (?:can|do) i|i (?:want|need) to)\b", q.low) \
-                and picked[0][0] < 6.0:
+        if how_to and picked[0][0] < 6.0:
             contact = self._contact_line(snap)
             if contact and contact not in text:
                 text += " " + contact
                 urls.append("https://www.dupaco.com/contact")
         return A.Draft(text, urls)
+
+    def _off_topic(self, q, picked) -> bool:
+        """No-LLM fallback for refusing: the best passage is neither close in meaning nor a strong match."""
+        sims = self.retriever.vectors.similarity(q.text, [p[1] for p in picked[:3]])
+        if not sims:
+            return False
+        best = max(sims)
+        return best < 0.3 or (best < 0.45 and picked[0][0] < 1.5)
 
     def _charter_area(self, snap: int) -> str | None:
         """The site defines its 'charter area' in its standard About-Dupaco paragraph."""
@@ -191,17 +209,26 @@ class DupacoKnowledge:
         if not m:
             return None
         noun = m.group(1)
-        stem = noun[:-2] if noun.endswith("es") and len(noun) > 6 else noun.rstrip("s")
+        stem = noun[:-2] if re.search(r"(ch|sh|x|ss)es$", noun) else noun[:-1] if noun.endswith("s") else noun
         extra = [t for t in A.tokenize(q.low[m.end():]) if t not in self.COUNT_STOP and len(t) > 3]
         filler = r"(?:(?!of\b|in\b|per\b|outside\b|than\b|every\b|for\b|at\b|to\b)[A-Za-z’'-]+\s+){0,2}?"
-        rx = re.compile(r"(?<![\d.,/])(?:\*\*)?\b(\d[\d,]*)\+?(?:\*\*)?\s+" + filler + re.escape(stem), re.I)
+        rx = re.compile(r"(?<![\d.,/])(?:\*\*)?\b(\d[\d,]*)\+?(?:\*\*)?\s+" + filler + re.escape(stem)
+                        + r"(?:e?s)?\b", re.I)
+        rx2 = re.compile(re.escape(stem) + r"\w*\s+(?:has\s+)?(?:grown to|reached|totals?|of|is)\s+"
+                         r"(?:more than |nearly |over |about |approximately |almost )?(\d[\d,]*)", re.I)
         found = []
         for c in self.store.chunks:     # scan everything: the newest statement may rank low in search
             if snap not in c.snaps or stem not in c.text.lower():
                 continue
             for sent in A.sentences(c.text):
                 mm = rx.search(sent)
-                if not mm or len(mm.group(1)) > 7:
+                if mm:
+                    after = sent[mm.end(): mm.end() + 25].lower()
+                    if re.match(r"\w*\s+(transactions?|accounts?|loans?|cards?|visits?|services?|institutions?|"
+                                r"organizations?|businesses|of)\b", after):
+                        mm = None       # "150,000 member transactions" is not a member count
+                mm = mm or rx2.search(sent)
+                if not mm or len(mm.group(1)) > 9:
                     continue
                 st = set(A.tokenize(sent)) | set(A.tokenize(c.title))
                 rel = sum(1 for t in extra if t in st)

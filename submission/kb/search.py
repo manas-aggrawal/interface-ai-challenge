@@ -22,6 +22,7 @@ SYNONYMS = {
     "address": ["located"], "located": ["address"], "card": ["visa"], "visa": ["card"],
     "join": ["membership", "member"], "eligible": ["membership", "join"], "phone": ["call"],
     "atm": ["locator"], "locations": ["branch"], "heloc": ["equity", "line"],
+    "lose": ["lost", "stolen"], "lost": ["stolen"], "stolen": ["lost"], "fee": ["charge"], "charge": ["fee"],
 }
 
 
