@@ -88,6 +88,7 @@ def rate_conflicts(facts) -> list[dict]:
         for measure, value in r.values.items():
             for snap in r.snaps:
                 groups[_key(r, measure, rows_by_table)].append((r, value, snap))
+    newest = max((sn for r in all_rows for sn in r.snaps), default=0)
     out = []
     for key, obs in groups.items():
         if key[0] == "other":          # unidentified product: can't claim a contradiction
@@ -110,7 +111,8 @@ def rate_conflicts(facts) -> list[dict]:
                 reasons.append(f"{v} was the older value (last seen in snapshot {s + 1})")
             else:
                 reasons.append(f"{v} on {r.url} is a {r.kind.name} page that was not updated")
-        reason = (f"{win_v} comes from the {win_r.kind.name} page {win_r.url}"
+        reason = ("still contradicted on the live site: " if len({v for _, v, sn in obs if sn == latest}) >= 2
+                  else "") + (f"{win_v} comes from the {win_r.kind.name} page {win_r.url}"
                   + (f" (effective {win_r.effective.isoformat()})" if win_r.effective else "")
                   + " in the newest snapshot; " + "; ".join(reasons))
         weight = win_r.authority + max(r.authority for r, _, _ in obs) + (1.0 if latest == max(
@@ -121,6 +123,8 @@ def rate_conflicts(facts) -> list[dict]:
             "values": sorted(values, key=lambda x: float(re.findall(r"\d+\.?\d*", x)[0])),
             "sources": [(win_r.url, latest)] + [(r.url, s) for r, _, s in losers.values()],
             "resolution": win_v, "reason": reason, "weight": weight, "family": win_r.family,
+            # still visible today: a stale page shows a different number than the official one
+            "open": len({v for _, v, sn in obs if sn == newest}) >= 2,
         })
     return out
 
@@ -152,7 +156,7 @@ def count_conflicts(store) -> list[dict]:
         "resolution": newest[1],
         "reason": f"most recently published statement ({newest[0].isoformat()}) says {newest[1]} branches; "
                   "older press releases repeat earlier counts",
-        "weight": 3.0, "family": "branches",
+        "weight": 3.0, "family": "branches", "open": True,
     }]
 
 
@@ -180,8 +184,10 @@ def find_conflicts(store, facts, limit: int = 45) -> list:
     from contract import Conflict, Source
 
     items = _dedupe(rate_conflicts(facts)) + count_conflicts(store)
-    # Keep the clearest, most member-relevant contradictions: F1 scoring punishes noise.
-    items.sort(key=lambda x: (-x["weight"], x["topic"]))
+    # Open contradictions (still on the live site) first, then the clearest, most member-relevant
+    # ones; jumbo/longer-term variants before their plain siblings so each is reported distinctly.
+    items.sort(key=lambda x: (not x.get("open"), (x.get("key") or [None] * 5)[4] or 0, -x["weight"],
+                              "jumbo" not in x["topic"], x["topic"]))
     seen_topics = set()
     out = []
     for it in items:
