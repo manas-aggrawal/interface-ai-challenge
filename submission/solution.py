@@ -58,7 +58,7 @@ class DupacoKnowledge:
         draft = None
         if q.intent == "rate" or (q.wants_rate and q.intent != "link"):
             snap_rows = self.facts.in_snapshot(snap)
-            draft = A.answer_rate(q, snap_rows, snap_rows)
+            draft = self._discontinued(q, snap, snap_rows) or A.answer_rate(q, snap_rows, snap_rows)
         if draft is None and q.intent == "hours":
             draft = self._hours(q, snap)
         if draft is None and q.intent == "address":
@@ -71,6 +71,27 @@ class DupacoKnowledge:
             draft = self._general(q, snap)
         return Answer(text=draft.text, sources=[Source(url=u, snapshot_id=sid) for u in draft.urls[:3]],
                       confident=draft.confident, conflict_note=draft.conflict_note)
+
+    def _discontinued(self, q, snap: int, snap_rows) -> A.Draft | None:
+        """A product that used to be on the official rate sheet but now only survives on promo /
+        landing pages is most likely an ended promotion - don't quote its stale number."""
+        if not q.family:
+            return None
+        fam = [r for r in snap_rows if r.family == q.family]
+        if not fam or max(r.authority for r in fam) >= 0.8:
+            return None
+        earlier = [r for r in self.facts.rows if r.family == q.family and r.kind.name == "rates"
+                   and min(r.snaps) < snap]
+        if not earlier:
+            return None
+        last = max(max(r.snaps) for r in earlier)
+        name = A.FAMILY_NAMES.get(q.family, q.family.replace("_", " "))
+        when = self.store.snapshots[last][1].strftime("%B %Y")
+        return A.Draft(f"The {name} is no longer listed on Dupaco's official rate sheet (it was last listed there in "
+                       f"{when}); only older promotional pages still mention it, so it may have ended. "
+                       "Please contact Dupaco to confirm whether it's still available and at what rate.",
+                       ["https://www.dupaco.com/rates"], confident=False,
+                       conflict_note="product only appears on landing pages in this snapshot; treated as an ended promotion")
 
     def _now(self, snap: int):
         return self.store.snapshots[snap][1]
@@ -91,13 +112,16 @@ class DupacoKnowledge:
             hits = self._hits(q, snap)
         if not hits:
             return A.Draft(A.REFUSAL, [], confident=False)
-        picked = A.best_sentences(q, hits, chunks, self._now(snap), self._idf, k=3,
+        picked = A.best_sentences(q, hits, chunks, self._now(snap), self._idf, k=6,
                                   need_number=q.intent == "count", similarity=self.retriever.vectors.similarity)
         if not picked:
             return A.Draft(A.REFUSAL, [], confident=False)
-        llm = self.llm.write(q.text, [chunks[c] for c, _ in hits[:6]], self._now(snap))
-        if llm:
-            return A.Draft(llm.text, llm.urls or [picked[0][2].url], confident=llm.confident)
+        choice = self.llm.select(q.text, [(p[1], p[2]) for p in picked], self._now(snap))
+        if choice:   # LLM as judge: its picks go first (words stay the website's own), top passages fill in
+            order = list(dict.fromkeys(list(choice) + list(range(len(picked)))))
+            picked = [picked[i] for i in order[:3]]
+        else:        # no LLM, or it found nothing convincing: keep the top passages
+            picked = picked[:3]
         text = " ".join(s if s.endswith((".", "!", "?", ":")) else s + "." for _, s, _ in picked)
         urls = list(dict.fromkeys(c.url for _, _, c in picked))
         if "charter area" in text.lower():

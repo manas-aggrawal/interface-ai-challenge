@@ -1,0 +1,12 @@
+[
+ {"id": "d1", "topic_keywords": ["60-month", "auto"], "values": ["5.34%", "5.39%"], "correct_value": "5.39%"},
+ {"id": "d2", "topic_keywords": ["84-month", "auto"], "values": ["5.54%", "5.59%"], "correct_value": "5.59%"},
+ {"id": "d3", "topic_keywords": ["10-month", "jumbo"], "values": ["3.90%", "4.00%"], "correct_value": "4.00%"},
+ {"id": "d4", "topic_keywords": ["17-month", "certificate"], "values": ["3.85%", "4.10%"], "correct_value": "4.10%"},
+ {"id": "d5", "topic_keywords": ["30-year", "mortgage"], "values": ["6.037%", "7.29%"], "correct_value": "7.29%"},
+ {"id": "d6", "topic_keywords": ["branch"], "values": ["22", "23", "24"], "correct_value": "22"},
+ {"id": "d7", "topic_keywords": ["checking"], "values": ["3.00%", "2.50%"], "correct_value": "2.50%"},
+ {"id": "d8", "topic_keywords": ["12-month", "certificate"], "values": ["2.90%", "3.40%"], "correct_value": "3.40%"},
+ {"id": "d9", "topic_keywords": ["15-year", "mortgage"], "values": ["5.623%", "6.88%"], "correct_value": "6.88%"},
+ {"id": "d10", "topic_keywords": ["72-month", "auto"], "values": ["5.44%", "5.49%"], "correct_value": "5.49%"}
+]

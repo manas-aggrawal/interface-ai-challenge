@@ -44,6 +44,7 @@ FAMILIES = [
     ("you_name_it", r"you name it"),
     ("holiday_club", r"holiday club"),
     ("launchpad", r"launchpad"),
+    ("achieve_money_market", r"\bachieve\b"),
     ("money_market", r"money market"),
     ("high_yield", r"high-yield|high yield"),
     ("hsa", r"health savings|\bhsa\b"),
@@ -186,7 +187,7 @@ def rows_from_table(t: Table, url: str, page_title: str, kind: PageKind,
                 values.setdefault(m, v)
             elif m and not v:
                 continue
-            elif c and c not in ("—", "-"):
+            elif c and c not in ("—", "-", "None", "N/A"):
                 if re.fullmatch(r"\$?[\d,]+(\.\d+)?%?", c.replace(" ", "")) and h:
                     other[h] = c
                 else:
@@ -197,7 +198,9 @@ def rows_from_table(t: Table, url: str, page_title: str, kind: PageKind,
         text = f"{t.title} {label_headers} {label}"
         fam = family_of(text)
         if fam == "other":
-            fam = inherited if inherited != "other" else family_of(f"{page_title} {url}")
+            generic = not t.title.strip() or re.fullmatch(
+                r"(?:.*> )?(regular|special|standard|variable|fixed|jumbo|select an option below:?)", t.title.strip().lower())
+            fam = inherited if inherited != "other" and generic else "other"
         if fam in LOAN_FAMILIES and "apy" in values and "apr" not in values:
             values["apr"] = values.pop("apy")      # loans have APRs; a page labelling one "APY" is wrong
         out.append(RateRow(
